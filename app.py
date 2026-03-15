@@ -12,7 +12,7 @@ import yfinance as yf
 # 1. Page Config
 # =========================================================
 st.set_page_config(
-    page_title="뀨의 미국주식 분석",
+    page_title="실전 투자 리포트",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -602,6 +602,104 @@ def fetch_short_info(ticker_symbol: str) -> Dict[str, Any]:
     except Exception:
         return {"available": False}
 
+
+# =========================================================
+# 11f. 종합 점수 / 등급 계산 (미국 앱용)
+# =========================================================
+def compute_us_grade(info, df, trend_col, mo, ri, sh) -> Dict[str, Any]:
+    score = 0
+    reasons = []
+
+    # PBR Valuation (미국은 yfinance priceToBook만 활용)
+    pbr = info.get("priceToBook")
+    fpe = info.get("forwardPE")
+    if is_valid_number(pbr):
+        if   pbr < 1.0:  score += 30; reasons.append("PBR<1 +30")
+        elif pbr < 2.0:  score += 15; reasons.append("PBR<2 +15")
+        elif pbr > 8.0:  score -= 20; reasons.append("PBR>8 -20")
+        elif pbr > 5.0:  score -= 10; reasons.append("PBR>5 -10")
+
+    # Forward PE
+    if is_valid_number(fpe):
+        if   fpe < 15: score += 15; reasons.append("PER<15 +15")
+        elif fpe < 25: score += 8;  reasons.append("PER<25 +8")
+        elif fpe > 50: score -= 10; reasons.append("PER>50 -10")
+
+    # ROE (Quality)
+    roe = info.get("returnOnEquity")
+    if is_valid_number(roe):
+        if   roe >= 0.25: score += 20; reasons.append("ROE≥25% +20")
+        elif roe >= 0.15: score += 12; reasons.append("ROE≥15% +12")
+        elif roe >= 0.08: score += 5;  reasons.append("ROE≥8% +5")
+        elif roe < 0:     score -= 10; reasons.append("ROE<0 -10")
+
+    # Momentum (6M)
+    r6m = mo.get("r6m")
+    if r6m is not None:
+        if   r6m >= 30:  score += 10; reasons.append("Momentum +10")
+        elif r6m >= 10:  score += 5;  reasons.append("Momentum +5")
+        elif r6m <= -20: score -= 10; reasons.append("Momentum -10")
+        elif r6m <= -10: score -= 5;  reasons.append("Momentum -5")
+
+    # PEG
+    peg = sh.get("peg")
+    if peg is not None:
+        if   peg < 0.5: score += 15; reasons.append("PEG<0.5 +15")
+        elif peg < 1.0: score += 10; reasons.append("PEG<1.0 +10")
+        elif peg < 1.5: score += 5;  reasons.append("PEG<1.5 +5")
+
+    # Risk (Beta)
+    beta = ri.get("beta")
+    if beta is not None:
+        if   beta > 2.0: score -= 8; reasons.append("Beta>2 -8")
+        elif beta > 1.5: score -= 4; reasons.append("Beta>1.5 -4")
+        elif beta < 0.8: score += 4; reasons.append("Beta<0.8 +4")
+
+    # MA200 추세
+    close = df[trend_col]
+    ma200 = df["MA200"].iloc[-1]
+    current = float(close.iloc[-1])
+    if is_valid_number(ma200):
+        if current > float(ma200): score += 5; reasons.append("MA200 상회 +5")
+        else:                      score -= 5; reasons.append("MA200 하회 -5")
+
+    # RSI
+    rsi = df["RSI14"].iloc[-1]
+    if is_valid_number(rsi):
+        if rsi >= 50: score += 5; reasons.append("RSI≥50 +5")
+
+    # 등급 판정
+    mo_strong = r6m is not None and r6m >= 30
+    roe_good  = is_valid_number(roe) and roe >= 0.15
+    is_growth = mo_strong and roe_good and peg is not None and peg < 1.0
+
+    if   score >= 80: grade = "Strong Buy"
+    elif score >= 65: grade = "Buy"
+    elif score >= 50: grade = "Growth" if is_growth else "Hold"
+    elif score >= 35: grade = "Growth" if is_growth else "Caution"
+    elif score >= 20: grade = "Growth" if is_growth else "Avoid"
+    else:             grade = "Avoid"
+
+    grade_cfg = {
+        "Strong Buy": ("#dcfce7", "#166534", "#16a34a"),
+        "Buy":        ("#dbeafe", "#1e3a8a", "#2563eb"),
+        "Growth":     ("#f3e8ff", "#5b21b6", "#7c3aed"),
+        "Hold":       ("#fef9c3", "#713f12", "#ca8a04"),
+        "Caution":    ("#ffedd5", "#7c2d12", "#ea580c"),
+        "Avoid":      ("#fee2e2", "#7f1d1d", "#dc2626"),
+    }.get(grade, ("#f1f5f9", "#334155", "#64748b"))
+
+    return {
+        "score": score, "grade": grade, "reasons": reasons,
+        "is_growth": is_growth, "grade_cfg": grade_cfg,
+        "val_score": sum(int(r.split()[1]) for r in reasons if any(k in r for k in ["PBR","PER"]) and r.split()[1][0] in "+-0123456789"),
+        "qua_score": sum(int(r.split()[1]) for r in reasons if "ROE" in r and r.split()[1][0] in "+-0123456789"),
+        "mo_score":  sum(int(r.split()[1]) for r in reasons if "Momentum" in r and r.split()[1][0] in "+-0123456789"),
+        "peg_score": sum(int(r.split()[1]) for r in reasons if "PEG" in r and r.split()[1][0] in "+-0123456789"),
+        "ri_score":  sum(int(r.split()[1]) for r in reasons if "Beta" in r and r.split()[1][0] in "+-0123456789"),
+        "tech_score":sum(int(r.split()[1]) for r in reasons if any(k in r for k in ["MA200","RSI"]) and r.split()[1][0] in "+-0123456789"),
+    }
+
 # =========================================================
 # 12. Support / Resistance / Strategy / Scenario
 # =========================================================
@@ -801,8 +899,12 @@ if user_input_symbol:
     sector_rel    = fetch_sector_relative(ticker, asset["sector"])
     short_data    = fetch_short_info(ticker)
 
-    status.text("🧮 분석 완료 중...")
-    progress.progress(85)
+    status.text("🧮 종합 점수 산출 중...")
+    progress.progress(80)
+    us_grade = compute_us_grade(info, df, trend_col, mo, ri, sh)
+
+    status.text("✅ 분석 완료!")
+    progress.progress(100)
 
     last_row = df.iloc[-1]
     prev_row = df.iloc[-2]
@@ -837,8 +939,76 @@ if user_input_symbol:
     ind_filled, ind_total     = compute_data_quality_summary(df)
 
     progress.progress(100)
-    status.empty()
-    progress.empty()
+
+    # ── 종합 등급 배너 ──
+    bg, fg, border = us_grade["grade_cfg"]
+    score = us_grade["score"]
+    grade = us_grade["grade"]
+    reasons_str = " · ".join(us_grade["reasons"]) if us_grade["reasons"] else "가산/감산 없음"
+
+    def _us_score_bar(label, val, max_val):
+        if val == 0: return ""
+        pct = min(abs(val) / max_val * 100, 100)
+        arrow = "▲" if val > 0 else "▼"
+        bar_color = "#22c55e" if val > 0 else "#ef4444"
+        return (
+            f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">'
+            f'<div style="font-size:11px;color:{fg};width:80px;opacity:0.85;">{label}</div>'
+            f'<div style="flex:1;background:rgba(255,255,255,0.2);border-radius:3px;height:8px;">'
+            f'<div style="width:{pct:.0f}%;background:{bar_color};height:8px;border-radius:3px;opacity:0.8;"></div></div>'
+            f'<div style="font-size:11px;font-weight:700;color:{fg};width:36px;text-align:right;">{arrow}{abs(val)}</div>'
+            f'</div>'
+        )
+
+    score_bars = (
+        _us_score_bar("Valuation", us_grade.get("val_score",0), 45) +
+        _us_score_bar("Quality",   us_grade.get("qua_score",0), 20) +
+        _us_score_bar("Momentum",  us_grade.get("mo_score",0),  10) +
+        _us_score_bar("PEG",       us_grade.get("peg_score",0), 15) +
+        _us_score_bar("Risk",      us_grade.get("ri_score",0),   8) +
+        _us_score_bar("기술적",   us_grade.get("tech_score",0), 10)
+    )
+
+    st.markdown(
+        f'<div style="background:{bg};border:2px solid {border};border-radius:16px;padding:18px;margin-bottom:18px;">'
+        f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;">'
+        f'<div><div style="font-size:11px;font-weight:700;color:{fg};letter-spacing:1px;margin-bottom:2px;">종합 등급</div>'
+        f'<div style="font-size:30px;font-weight:900;color:{fg};line-height:1.1;">{grade}</div></div>'
+        f'<div style="text-align:right;"><div style="font-size:11px;font-weight:700;color:{fg};letter-spacing:1px;margin-bottom:2px;">종합 점수</div>'
+        f'<div style="font-size:30px;font-weight:900;color:{fg};line-height:1.1;">{score}점</div></div>'
+        f'</div>'
+        f'<div style="border-top:1px solid {border};padding-top:10px;margin-bottom:8px;">{score_bars}</div>'
+        f'<div style="font-size:11px;color:{fg};opacity:0.75;line-height:1.6;">{reasons_str}</div>'
+        + (f'<div style="font-size:11px;color:{fg};opacity:0.7;margin-top:6px;">🌱 성장주: 강한 모멘텀 · 우량 ROE · PEG&lt;1 — 성장이 밸류를 정당화</div>' if grade == "Growth" else '')
+        + f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── 상태 배지 ──
+    badges = []
+    _pbr = info.get("priceToBook")
+    _r6m = mo.get("r6m")
+    _rsi14 = float(df["RSI14"].iloc[-1]) if is_valid_number(df["RSI14"].iloc[-1]) else None
+    if is_valid_number(_pbr):
+        if _pbr < 1.5:  badges.append(("저평가 가능성", "#dcfce7", "#166534"))
+        elif _pbr > 8:  badges.append(("고평가 주의",   "#fee2e2", "#991b1b"))
+    if _r6m is not None and _r6m >= 30:
+        badges.append(("추세 강화", "#dbeafe", "#1e3a8a"))
+    if sh.get("peg") is not None and sh["peg"] < 1.0:
+        badges.append(("성장 저평가(PEG<1)", "#f3e8ff", "#5b21b6"))
+    if _rsi14 is not None:
+        if _rsi14 < 35: badges.append(("과매도 구간", "#fef9c3", "#713f12"))
+        elif _rsi14 > 70: badges.append(("과매수 구간", "#fee2e2", "#991b1b"))
+    if sh.get("fcf_yield") is not None and sh["fcf_yield"] > 5:
+        badges.append(("FCF 우수", "#dcfce7", "#166534"))
+
+    if badges:
+        badge_html = " ".join([
+            f'<span style="background:{bg2};color:{fg2};font-size:12px;font-weight:700;'
+            f'padding:4px 10px;border-radius:20px;margin-right:4px;">{lbl}</span>'
+            for lbl, bg2, fg2 in badges
+        ])
+        st.markdown(f'<div style="margin-bottom:14px;">{badge_html}</div>', unsafe_allow_html=True)
 
     # ── resolve 표시
     if resolved["method"] == "alias":
@@ -1244,17 +1414,73 @@ if user_input_symbol:
     with srisk:
         st.markdown(f"<div class='scenario-bear'><div style='font-weight:900;font-size:15px;margin-bottom:8px;'>약세 시나리오</div><div>{bear_scenario}</div></div>", unsafe_allow_html=True)
 
+    # ── 등급 가이드
+    with st.expander("📖 등급 기준 가이드"):
+        st.markdown(
+            '''
+            <div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;font-size:13px;">
+            <div style="font-weight:900;font-size:15px;color:#0f172a;margin-bottom:14px;">📊 종합 등급 기준표</div>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="border-bottom:2px solid #e2e8f0;">
+                    <th style="text-align:left;padding:8px 10px;color:#64748b;font-size:12px;">등급</th>
+                    <th style="text-align:center;padding:8px 10px;color:#64748b;font-size:12px;">점수</th>
+                    <th style="text-align:left;padding:8px 10px;color:#64748b;font-size:12px;">의미</th>
+                </tr></thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                        <td style="padding:10px;"><span style="background:#dcfce7;color:#166534;font-weight:800;padding:3px 10px;border-radius:8px;">Strong Buy</span></td>
+                        <td style="text-align:center;padding:10px;font-weight:700;">80점↑</td>
+                        <td style="padding:10px;color:#475569;">밸류 저평가 + 품질 모두 우수.</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                        <td style="padding:10px;"><span style="background:#dbeafe;color:#1e3a8a;font-weight:800;padding:3px 10px;border-radius:8px;">Buy</span></td>
+                        <td style="text-align:center;padding:10px;font-weight:700;">65점↑</td>
+                        <td style="padding:10px;color:#475569;">밸류 + 품질 양호. 매수 적합.</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                        <td style="padding:10px;"><span style="background:#f3e8ff;color:#5b21b6;font-weight:800;padding:3px 10px;border-radius:8px;">Growth</span></td>
+                        <td style="text-align:center;padding:10px;font-weight:700;">20~65점</td>
+                        <td style="padding:10px;color:#475569;">강한 모멘텀·우량 ROE·PEG&lt;1 — 성장이 밸류를 정당화.</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                        <td style="padding:10px;"><span style="background:#fef9c3;color:#713f12;font-weight:800;padding:3px 10px;border-radius:8px;">Hold</span></td>
+                        <td style="text-align:center;padding:10px;font-weight:700;">50점↑</td>
+                        <td style="padding:10px;color:#475569;">중립. 보유 유효하나 추가 매수는 신중.</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #f1f5f9;">
+                        <td style="padding:10px;"><span style="background:#ffedd5;color:#7c2d12;font-weight:800;padding:3px 10px;border-radius:8px;">Caution</span></td>
+                        <td style="text-align:center;padding:10px;font-weight:700;">35점↑</td>
+                        <td style="padding:10px;color:#475569;">고평가 또는 품질 약세. 신규 매수 주의.</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:10px;"><span style="background:#fee2e2;color:#7f1d1d;font-weight:800;padding:3px 10px;border-radius:8px;">Avoid</span></td>
+                        <td style="text-align:center;padding:10px;font-weight:700;">35점↓</td>
+                        <td style="padding:10px;color:#475569;">고평가 + 품질·모멘텀 모두 약세. 매수 회피.</td>
+                    </tr>
+                </tbody>
+            </table>
+            <div style="margin-top:14px;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px;color:#64748b;line-height:1.7;">
+                <b>점수 구성</b>: Valuation(PBR·PER) · Quality(ROE) · Momentum(6M수익률) · PEG · Risk(Beta) · 기술적(MA200·RSI)<br>
+                <b>Growth 조건</b>: 6M ≥ 30% AND ROE ≥ 15% AND PEG &lt; 1.0 동시 충족<br>
+                <b>주의</b>: yfinance 데이터는 지연·누락될 수 있어 참고용으로만 활용하세요.
+            </div>
+            </div>
+            ''',
+            unsafe_allow_html=True,
+        )
+
     # ── 출처 / 면책 고지
     today = datetime.date.today().strftime("%Y.%m.%d")
     st.markdown(
         f"""
-        <div style="margin-top:24px;padding:14px 16px;background:#f8fafc;
+        <div style="margin-top:16px;padding:14px 16px;background:#f8fafc;
                     border-top:1px solid #e2e8f0;border-radius:10px;
                     font-size:12px;color:#94a3b8;line-height:1.8;">
             <div style="font-weight:700;color:#64748b;margin-bottom:4px;">📋 데이터 출처 및 면책 고지</div>
             가격 데이터: Yahoo Finance (yfinance) · 기준일: {today}<br>
             기술적 지표: 자체 계산 (MA·RSI·MACD·ATR·볼린저밴드·Beta·Sharpe)<br>
-            펀더멘털: Yahoo Finance info (지연 또는 누락 가능)<br><br>
+            펀더멘털·컨센서스·공매도: Yahoo Finance info (지연 또는 누락 가능)<br>
+            섹터 ETF 비교: XLK·XLV·XLF 등 SPDR 섹터 ETF<br><br>
             <span style="color:#cbd5e1;">
             ⚠️ 본 화면은 정보 제공용이며, 투자 권유가 아닙니다.
             모든 투자 판단과 책임은 본인에게 있습니다.
