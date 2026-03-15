@@ -12,7 +12,7 @@ import yfinance as yf
 # 1. Page Config
 # =========================================================
 st.set_page_config(
-    page_title="실전 투자 리포트",
+    page_title="뀨의 미국주식 분석",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -1488,7 +1488,10 @@ if user_input_symbol:
 
     # ── AI 투자 요약 ──
     st.markdown("<div style='font-size:16px;font-weight:800;color:#0f172a;margin-top:10px;margin-bottom:12px;'>🤖 AI 투자 요약</div>", unsafe_allow_html=True)
-    if st.button("✨ AI 분석 생성", key="us_ai_btn", use_container_width=True):
+    _api_key_check = st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else ""
+    if not _api_key_check:
+        st.info("💡 AI 분석을 활성화하려면 Streamlit Cloud → Settings → Secrets에 `ANTHROPIC_API_KEY = \"sk-ant-...\"` 를 추가해주세요.")
+    if st.button("✨ AI 분석 생성", key="us_ai_btn", use_container_width=True, disabled=not _api_key_check):
         with st.spinner("Claude가 분석 중입니다..."):
             try:
                 import requests as _req
@@ -1549,7 +1552,11 @@ if user_input_symbol:
 
                 _resp = _req.post(
                     "https://api.anthropic.com/v1/messages",
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "x-api-key": st.secrets.get("ANTHROPIC_API_KEY", ""),
+                        "anthropic-version": "2023-06-01",
+                    },
                     json={
                         "model": "claude-sonnet-4-20250514",
                         "max_tokens": 1000,
