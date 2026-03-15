@@ -12,7 +12,7 @@ import yfinance as yf
 # 1. Page Config
 # =========================================================
 st.set_page_config(
-    page_title="실전 투자 리포트",
+    page_title="뀨의 미국주식 분석",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -298,7 +298,7 @@ def classify_asset(info):
 
 
 # =========================================================
-# 8. Indicator Engine (볼린저밴드 추가)
+# 8. Indicator Engine
 # =========================================================
 def calculate_indicators(df):
     out = clean_price_df(df)
@@ -309,7 +309,6 @@ def calculate_indicators(df):
     out["MA50"]  = out[trend_col].rolling(50).mean()
     out["MA200"] = out[trend_col].rolling(200).mean()
 
-    # RSI (Wilder)
     delta = out[trend_col].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
@@ -318,21 +317,18 @@ def calculate_indicators(df):
     rs = avg_gain / avg_loss.replace(0, np.nan)
     out["RSI14"] = 100 - (100 / (1 + rs))
 
-    # ATR
     high_low   = out["High"] - out["Low"]
     high_close = (out["High"] - out["Close"].shift(1)).abs()
     low_close  = (out["Low"]  - out["Close"].shift(1)).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     out["ATR14"] = tr.ewm(alpha=1/14, adjust=False, min_periods=14).mean()
 
-    # MACD
     ema12 = out[trend_col].ewm(span=12, adjust=False).mean()
     ema26 = out[trend_col].ewm(span=26, adjust=False).mean()
     out["MACD"]        = ema12 - ema26
     out["MACD_SIGNAL"] = out["MACD"].ewm(span=9, adjust=False).mean()
     out["MACD_HIST"]   = out["MACD"] - out["MACD_SIGNAL"]
 
-    # 볼린저밴드 (20일, 2σ)
     bb_mid   = out[trend_col].rolling(20).mean()
     bb_std   = out[trend_col].rolling(20).std(ddof=0)
     out["BB_UPPER"] = bb_mid + 2 * bb_std
@@ -341,12 +337,10 @@ def calculate_indicators(df):
     out["BB_WIDTH"] = (out["BB_UPPER"] - out["BB_LOWER"]) / bb_mid * 100
     out["BB_PCT"]   = (out[trend_col] - out["BB_LOWER"]) / (out["BB_UPPER"] - out["BB_LOWER"]) * 100
 
-    # MDD
     roll_max  = out[trend_col].cummax()
     drawdown  = out[trend_col] / roll_max - 1.0
     mdd = drawdown.min() * 100 if len(drawdown.dropna()) > 0 else np.nan
 
-    # Volume
     out["VOL20"] = out["Volume"].rolling(20).mean()
 
     high_52 = out["High"].max() if "High" in out.columns else np.nan
@@ -364,7 +358,7 @@ def calculate_indicators(df):
 
 
 # =========================================================
-# 9. Momentum (수익률)
+# 9. Momentum
 # =========================================================
 def compute_momentum(df, trend_col):
     close = df[trend_col]
@@ -395,7 +389,7 @@ def compute_momentum(df, trend_col):
 
 
 # =========================================================
-# 10. Risk (Beta / Sharpe / Volatility)
+# 10. Risk
 # =========================================================
 def compute_risk(df, trend_col):
     close = df[trend_col]
@@ -403,7 +397,6 @@ def compute_risk(df, trend_col):
 
     vol_1y = float(daily_ret.tail(252).std() * np.sqrt(252) * 100) if len(daily_ret) >= 60 else None
 
-    # Beta vs SPY
     beta = None
     try:
         spy = yf.Ticker("SPY").history(period="2y")["Close"].pct_change().dropna()
@@ -414,7 +407,6 @@ def compute_risk(df, trend_col):
     except Exception:
         pass
 
-    # Sharpe (무위험 3.5%)
     sharpe = None
     if vol_1y and vol_1y > 0:
         ann_ret = float(daily_ret.tail(252).mean() * 252 * 100)
@@ -433,12 +425,10 @@ def compute_shareholder(info):
     payout_ratio= info.get("payoutRatio")
     eps_growth  = info.get("earningsGrowth") or info.get("earningsQuarterlyGrowth")
 
-    # PEG
     peg = None
     if is_valid_number(forward_pe) and is_valid_number(eps_growth) and eps_growth > 0:
         peg = round(forward_pe / (eps_growth * 100), 2)
 
-    # FCF Yield
     fcf_yield = None
     try:
         fcf = info.get("freeCashflow")
@@ -455,10 +445,8 @@ def compute_shareholder(info):
     }
 
 
-
-
 # =========================================================
-# 11b. 애널리스트 의견 분포
+# 11b. 애널리스트 의견
 # =========================================================
 @st.cache_data(ttl=3600)
 def fetch_analyst_info(ticker_symbol: str) -> Dict[str, Any]:
@@ -473,13 +461,9 @@ def fetch_analyst_info(ticker_symbol: str) -> Dict[str, Any]:
             "rec_mean":      info.get("recommendationMean"),
             "rec_key":       info.get("recommendationKey", ""),
             "num_analysts":  info.get("numberOfAnalystOpinions"),
-            "strong_buy":    None,
-            "buy":           None,
-            "hold":          None,
-            "sell":          None,
-            "strong_sell":   None,
+            "strong_buy": None, "buy": None, "hold": None,
+            "sell": None, "strong_sell": None,
         }
-        # 상세 의견 수
         try:
             rec_df = t.recommendations_summary
             if rec_df is not None and not rec_df.empty:
@@ -497,7 +481,7 @@ def fetch_analyst_info(ticker_symbol: str) -> Dict[str, Any]:
 
 
 # =========================================================
-# 11c. 실적 서프라이즈 (최근 4분기)
+# 11c. 실적 서프라이즈
 # =========================================================
 @st.cache_data(ttl=3600)
 def fetch_earnings_surprise(ticker_symbol: str) -> list:
@@ -557,14 +541,12 @@ def fetch_sector_relative(ticker_symbol: str, sector: str) -> Dict[str, Any]:
                 return (float(series.iloc[-1]) / float(series.iloc[-days]) - 1) * 100
             return None
         result = {
-            "available": True,
-            "etf":       etf,
+            "available": True, "etf": etf,
             "stock_1m":  ret(stock_df, 21),  "etf_1m":  ret(etf_df, 21),
             "stock_3m":  ret(stock_df, 63),  "etf_3m":  ret(etf_df, 63),
             "stock_6m":  ret(stock_df, 126), "etf_6m":  ret(etf_df, 126),
             "stock_12m": ret(stock_df, 252), "etf_12m": ret(etf_df, 252),
         }
-        # 상대 수익률
         for p in ["1m", "3m", "6m", "12m"]:
             s, e = result[f"stock_{p}"], result[f"etf_{p}"]
             result[f"rel_{p}"] = (s - e) if s is not None and e is not None else None
@@ -604,13 +586,12 @@ def fetch_short_info(ticker_symbol: str) -> Dict[str, Any]:
 
 
 # =========================================================
-# 11f. 종합 점수 / 등급 계산 (미국 앱용)
+# 11f. 종합 점수 / 등급 계산
 # =========================================================
 def compute_us_grade(info, df, trend_col, mo, ri, sh) -> Dict[str, Any]:
     score = 0
     reasons = []
 
-    # PBR Valuation (미국은 yfinance priceToBook만 활용)
     pbr = info.get("priceToBook")
     fpe = info.get("forwardPE")
     if is_valid_number(pbr):
@@ -619,13 +600,11 @@ def compute_us_grade(info, df, trend_col, mo, ri, sh) -> Dict[str, Any]:
         elif pbr > 8.0:  score -= 20; reasons.append("PBR>8 -20")
         elif pbr > 5.0:  score -= 10; reasons.append("PBR>5 -10")
 
-    # Forward PE
     if is_valid_number(fpe):
         if   fpe < 15: score += 15; reasons.append("PER<15 +15")
         elif fpe < 25: score += 8;  reasons.append("PER<25 +8")
         elif fpe > 50: score -= 10; reasons.append("PER>50 -10")
 
-    # ROE (Quality)
     roe = info.get("returnOnEquity")
     if is_valid_number(roe):
         if   roe >= 0.25: score += 20; reasons.append("ROE≥25% +20")
@@ -633,7 +612,6 @@ def compute_us_grade(info, df, trend_col, mo, ri, sh) -> Dict[str, Any]:
         elif roe >= 0.08: score += 5;  reasons.append("ROE≥8% +5")
         elif roe < 0:     score -= 10; reasons.append("ROE<0 -10")
 
-    # Momentum (6M)
     r6m = mo.get("r6m")
     if r6m is not None:
         if   r6m >= 30:  score += 10; reasons.append("Momentum +10")
@@ -641,21 +619,18 @@ def compute_us_grade(info, df, trend_col, mo, ri, sh) -> Dict[str, Any]:
         elif r6m <= -20: score -= 10; reasons.append("Momentum -10")
         elif r6m <= -10: score -= 5;  reasons.append("Momentum -5")
 
-    # PEG
     peg = sh.get("peg")
     if peg is not None:
         if   peg < 0.5: score += 15; reasons.append("PEG<0.5 +15")
         elif peg < 1.0: score += 10; reasons.append("PEG<1.0 +10")
         elif peg < 1.5: score += 5;  reasons.append("PEG<1.5 +5")
 
-    # Risk (Beta)
     beta = ri.get("beta")
     if beta is not None:
         if   beta > 2.0: score -= 8; reasons.append("Beta>2 -8")
         elif beta > 1.5: score -= 4; reasons.append("Beta>1.5 -4")
         elif beta < 0.8: score += 4; reasons.append("Beta<0.8 +4")
 
-    # MA200 추세
     close = df[trend_col]
     ma200 = df["MA200"].iloc[-1]
     current = float(close.iloc[-1])
@@ -663,12 +638,10 @@ def compute_us_grade(info, df, trend_col, mo, ri, sh) -> Dict[str, Any]:
         if current > float(ma200): score += 5; reasons.append("MA200 상회 +5")
         else:                      score -= 5; reasons.append("MA200 하회 -5")
 
-    # RSI
     rsi = df["RSI14"].iloc[-1]
     if is_valid_number(rsi):
         if rsi >= 50: score += 5; reasons.append("RSI≥50 +5")
 
-    # 등급 판정
     mo_strong = r6m is not None and r6m >= 30
     roe_good  = is_valid_number(roe) and roe >= 0.15
     is_growth = mo_strong and roe_good and peg is not None and peg < 1.0
@@ -689,16 +662,28 @@ def compute_us_grade(info, df, trend_col, mo, ri, sh) -> Dict[str, Any]:
         "Avoid":      ("#fee2e2", "#7f1d1d", "#dc2626"),
     }.get(grade, ("#f1f5f9", "#334155", "#64748b"))
 
+    def _sum_scores(keywords):
+        total = 0
+        for r in reasons:
+            parts = r.split()
+            if any(k in r for k in keywords) and len(parts) >= 2:
+                try:
+                    total += int(parts[1])
+                except (ValueError, IndexError):
+                    pass
+        return total
+
     return {
         "score": score, "grade": grade, "reasons": reasons,
         "is_growth": is_growth, "grade_cfg": grade_cfg,
-        "val_score": sum(int(r.split()[1]) for r in reasons if any(k in r for k in ["PBR","PER"]) and r.split()[1][0] in "+-0123456789"),
-        "qua_score": sum(int(r.split()[1]) for r in reasons if "ROE" in r and r.split()[1][0] in "+-0123456789"),
-        "mo_score":  sum(int(r.split()[1]) for r in reasons if "Momentum" in r and r.split()[1][0] in "+-0123456789"),
-        "peg_score": sum(int(r.split()[1]) for r in reasons if "PEG" in r and r.split()[1][0] in "+-0123456789"),
-        "ri_score":  sum(int(r.split()[1]) for r in reasons if "Beta" in r and r.split()[1][0] in "+-0123456789"),
-        "tech_score":sum(int(r.split()[1]) for r in reasons if any(k in r for k in ["MA200","RSI"]) and r.split()[1][0] in "+-0123456789"),
+        "val_score":  _sum_scores(["PBR", "PER"]),
+        "qua_score":  _sum_scores(["ROE"]),
+        "mo_score":   _sum_scores(["Momentum"]),
+        "peg_score":  _sum_scores(["PEG"]),
+        "ri_score":   _sum_scores(["Beta"]),
+        "tech_score": _sum_scores(["MA200", "RSI"]),
     }
+
 
 # =========================================================
 # 12. Support / Resistance / Strategy / Scenario
@@ -792,10 +777,13 @@ def build_scenarios(current_price, target_price, ma200, support_1, support_2, re
 
 
 # =========================================================
-# 13. App Header (즐겨찾기 / 최근검색)
+# 13. App Header
 # =========================================================
+
+# ── 제목
+st.title("📊 뀨의 미국주식 분석")
 st.caption(
-    f"<span style='color:#64748b;'>실전 투자 리포트 · {datetime.datetime.now().strftime('%Y.%m.%d')}</span>",
+    f"<span style='color:#64748b;'>{datetime.datetime.now().strftime('%Y.%m.%d')}</span>",
     unsafe_allow_html=True,
 )
 
@@ -830,7 +818,6 @@ user_input_symbol = st.text_input(
 # 14. Main UI
 # =========================================================
 if user_input_symbol:
-    # ── 단계별 프로그레스바
     progress = st.progress(0)
     status   = st.empty()
 
@@ -843,14 +830,12 @@ if user_input_symbol:
         st.error("입력값을 해석하지 못했습니다.")
         st.stop()
 
-    # 최근 검색 저장
     disp = ticker
     if disp not in st.session_state.us_history:
         st.session_state.us_history.append(disp)
     if len(st.session_state.us_history) > 10:
         st.session_state.us_history = st.session_state.us_history[-10:]
 
-    # 즐겨찾기 버튼
     is_fav = disp in st.session_state.us_favorites
     if st.button("⭐ 즐겨찾기 해제" if is_fav else "☆ 즐겨찾기 추가", key="us_toggle_fav"):
         if is_fav: st.session_state.us_favorites.remove(disp)
@@ -900,11 +885,12 @@ if user_input_symbol:
     short_data    = fetch_short_info(ticker)
 
     status.text("🧮 종합 점수 산출 중...")
-    progress.progress(80)
+    progress.progress(85)
     us_grade = compute_us_grade(info, df, trend_col, mo, ri, sh)
 
-    status.text("✅ 분석 완료!")
     progress.progress(100)
+    status.empty()
+    progress.empty()
 
     last_row = df.iloc[-1]
     prev_row = df.iloc[-2]
@@ -938,9 +924,7 @@ if user_input_symbol:
     filled_count, total_count = count_info_completeness(info, info_keys)
     ind_filled, ind_total     = compute_data_quality_summary(df)
 
-    progress.progress(100)
-
-    # ── 종합 등급 배너 ──
+    # ── 종합 등급 배너
     bg, fg, border = us_grade["grade_cfg"]
     score = us_grade["score"]
     grade = us_grade["grade"]
@@ -984,7 +968,7 @@ if user_input_symbol:
         unsafe_allow_html=True,
     )
 
-    # ── 상태 배지 ──
+    # ── 상태 배지
     badges = []
     _pbr = info.get("priceToBook")
     _r6m = mo.get("r6m")
@@ -1010,7 +994,6 @@ if user_input_symbol:
         ])
         st.markdown(f'<div style="margin-bottom:14px;">{badge_html}</div>', unsafe_allow_html=True)
 
-    # ── resolve 표시
     if resolved["method"] == "alias":
         st.markdown(f"<div class='info-note'>입력값 <b>{safe_text(user_input_symbol)}</b> → 별칭 <b>{safe_text(ticker)}</b></div>", unsafe_allow_html=True)
     elif resolved["method"] == "search":
@@ -1022,7 +1005,7 @@ if user_input_symbol:
     st.markdown(f"<div class='quality-box'>메타데이터 완전성: <b>{filled_count}/{total_count}</b> | 기술지표 계산 가능: <b>{ind_filled}/{ind_total}</b></div>", unsafe_allow_html=True)
     st.markdown("<hr style='margin: 12px 0; border-color: #e2e8f0;'>", unsafe_allow_html=True)
 
-    # ── 핵심 수치 (Top Summary)
+    # ── 핵심 수치
     c1, c2, c3, c4 = st.columns(4)
     c1.markdown(render_metric_html(f"종가 ({display_col})", fmt_price(current_price),
         subvalue=f"{pct_change:+.2f}%", subcolor="#dc2626" if price_change < 0 else "#059669"), unsafe_allow_html=True)
@@ -1052,7 +1035,6 @@ if user_input_symbol:
             c3.markdown(render_metric_html("매출 성장률(YoY)", fmt_ratio_pct(info.get("revenueGrowth"))), unsafe_allow_html=True)
         c4.markdown(render_metric_html("예상 실적 일정", fmt_date_from_timestamp(info.get("earningsTimestamp"))), unsafe_allow_html=True)
 
-    # 52주 위치 (일반 주식)
     if not asset["is_index"] and not asset["is_etf_like"]:
         pos_52w = compute_52w_position(current_price, high_52, low_52)
         st.markdown(
@@ -1097,7 +1079,7 @@ if user_input_symbol:
 
     st.markdown("### 📚 분석 카드")
 
-    # ── 주주환원 카드
+    # ── 주주환원
     if not asset["is_index"] and not asset["is_etf_like"]:
         sh_lines = []
         if is_valid_number(sh["div_yield"]):  sh_lines.append(f"배당수익률: <b>{sh['div_yield']*100:.2f}%</b>")
@@ -1111,11 +1093,11 @@ if user_input_symbol:
         sh_desc = "<br>".join(sh_lines) if sh_lines else "주주환원 데이터를 불러오지 못했습니다."
         st.markdown(render_info_card(f"💰 주주환원 {sh_rel}", f"배당수익률 {sh_val}", sh_desc), unsafe_allow_html=True)
 
-    # ── 볼린저밴드 카드 (신규)
+    # ── 볼린저밴드
     bb_pct   = last_row.get("BB_PCT")
     bb_upper = last_row.get("BB_UPPER")
     bb_lower = last_row.get("BB_LOWER")
-    bb_mid   = last_row.get("BB_MID")
+    bb_mid_v = last_row.get("BB_MID")
     bb_width = last_row.get("BB_WIDTH")
     if is_valid_number(bb_pct):
         if   bb_pct >= 100: bb_pos = "상단 돌파 🔴"
@@ -1123,12 +1105,12 @@ if user_input_symbol:
         elif bb_pct <= 0:   bb_pos = "하단 이탈 🟢"
         elif bb_pct <= 20:  bb_pos = "하단 근접 👀"
         else:               bb_pos = "밴드 내 중립"
-        bb_desc = (f"상단: {fmt_price(bb_upper)} / 중간: {fmt_price(bb_mid)} / 하단: {fmt_price(bb_lower)}<br>"
+        bb_desc = (f"상단: {fmt_price(bb_upper)} / 중간: {fmt_price(bb_mid_v)} / 하단: {fmt_price(bb_lower)}<br>"
                    f"밴드폭: {bb_width:.1f}% · 밴드 내 위치: {bb_pct:.1f}%")
         st.markdown(render_info_card(f"🎯 볼린저밴드 {reliability_badge('high')}", f"{bb_pos} ({bb_pct:.1f}%)",
             f"<b>설명:</b> {bb_desc}<br>80%↑ 과매수 주의 / 20%↓ 과매도 반등 가능. 밴드폭 축소 후 확장 시 큰 움직임 예고."), unsafe_allow_html=True)
 
-    # ── Momentum 카드 (신규)
+    # ── Momentum
     mo_lines = []
     for label, val in [("1개월", mo["r1m"]), ("3개월", mo["r3m"]), ("6개월", mo["r6m"]), ("12개월", mo["r12m"])]:
         if is_valid_number(val):
@@ -1148,7 +1130,7 @@ if user_input_symbol:
         st.markdown(render_info_card(f"📈 Momentum {reliability_badge('high')}", f"6M: {r6m_str}",
             " · ".join(mo_lines)), unsafe_allow_html=True)
 
-    # ── Risk 카드 (신규)
+    # ── Risk
     ri_lines = []
     if is_valid_number(ri["beta"]):    ri_lines.append(f"Beta (vs SPY): <b>{ri['beta']:.2f}</b>")
     if is_valid_number(ri["vol_1y"]):  ri_lines.append(f"연간 변동성: <b>{ri['vol_1y']:.1f}%</b>")
@@ -1159,10 +1141,9 @@ if user_input_symbol:
         st.markdown(render_info_card(f"⚠️ Risk {ri_rel}", f"Beta {beta_str}",
             "<br>".join(ri_lines) + "<br><b>해석:</b> Beta>1 시장보다 변동 큼 / Sharpe>1 양호한 위험 대비 수익"), unsafe_allow_html=True)
 
-
     st.markdown("### 📡 시장 컨센서스")
 
-    # ── 애널리스트 의견 분포
+    # ── 애널리스트 의견
     if not asset["is_index"] and analyst_data:
         t_mean = analyst_data.get("target_mean")
         t_high = analyst_data.get("target_high")
@@ -1184,13 +1165,6 @@ if user_input_symbol:
 
         vote_html = ""
         if total_votes > 0:
-            bar_items = [
-                (sb, "#166534", "Strong Buy"),
-                (b,  "#2563eb", "Buy"),
-                (h,  "#ca8a04", "Hold"),
-                (s,  "#ea580c", "Sell"),
-                (ss, "#dc2626", "Strong Sell"),
-            ]
             bars = "".join([
                 f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">'
                 f'<div style="font-size:11px;color:#64748b;width:72px;">{lbl}</div>'
@@ -1198,7 +1172,10 @@ if user_input_symbol:
                 f'<div style="width:{cnt/total_votes*100:.0f}%;background:{col};height:10px;border-radius:4px;"></div></div>'
                 f'<div style="font-size:11px;font-weight:700;color:{col};width:20px;text-align:right;">{cnt}</div>'
                 f'</div>'
-                for cnt, col, lbl in bar_items if cnt > 0
+                for cnt, col, lbl in [
+                    (sb,"#166534","Strong Buy"),(b,"#2563eb","Buy"),(h,"#ca8a04","Hold"),
+                    (s,"#ea580c","Sell"),(ss,"#dc2626","Strong Sell")
+                ] if cnt > 0
             ])
             vote_html = f'<div style="margin-top:10px;">{bars}</div>'
 
@@ -1226,13 +1203,13 @@ if user_input_symbol:
             surp = e["surprise"]
             surp_color = "#16a34a" if surp and surp >= 0 else "#dc2626"
             surp_str   = f'<span style="color:{surp_color};font-weight:700;">{surp:+.2f}</span>' if surp is not None else "N/A"
+            _est_str    = f'${e["eps_est"]:.2f}'    if e["eps_est"]    is not None else "N/A"
+            _actual_str = f'${e["eps_actual"]:.2f}' if e["eps_actual"] is not None else "N/A"
             rows_html += (
                 f'<tr style="border-bottom:1px solid #f1f5f9;">'
                 f'<td style="padding:7px 8px;font-size:12px;color:#64748b;">{e["date"]}</td>'
-                f'<td style="padding:7px 8px;font-size:12px;text-align:right;">'
-                f'{"$"+f'{e["eps_est"]:.2f}' if e["eps_est"] is not None else "N/A"}</td>'
-                f'<td style="padding:7px 8px;font-size:12px;text-align:right;font-weight:700;">'
-                f'{"$"+f'{e["eps_actual"]:.2f}' if e["eps_actual"] is not None else "N/A"}</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;">{_est_str}</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;font-weight:700;">{_actual_str}</td>'
                 f'<td style="padding:7px 8px;text-align:right;">{surp_str}</td>'
                 f'</tr>'
             )
@@ -1295,7 +1272,6 @@ if user_input_symbol:
                 ),
                 unsafe_allow_html=True,
             )
-
 
     # ── S&P500 대비 성과
     try:
@@ -1423,7 +1399,6 @@ if user_input_symbol:
 
     st.markdown("### 📍 지지 / 저항")
 
-    # ── Support / Resistance
     sr = build_support_resistance(float(last_row[trend_col]), last_row["ATR14"], last_row["MA20"], last_row["MA50"], high_52)
     st.markdown("<div style='font-size:16px; font-weight:800; color:#0f172a; margin-top:8px; margin-bottom:12px;'>📌 주요 지지 / 저항 레벨</div>", unsafe_allow_html=True)
     s1, s2, r1, r2, br = st.columns(5)
@@ -1436,7 +1411,6 @@ if user_input_symbol:
 
     st.markdown("### 🎯 관심 구간")
 
-    # ── Action Zones
     st.markdown("<div style='font-size:16px; font-weight:800; color:#0f172a; margin-top:8px; margin-bottom:12px;'>🎯 기계적 관심 구간 (참고용)</div>", unsafe_allow_html=True)
     zones = build_action_zones(float(last_row[trend_col]), last_row["MA50"], last_row["MA200"], last_row["ATR14"])
     gap_text = f"현재가 대비 1차 하단까지 {zones['gap_to_zone1']:.2f}%" if is_valid_number(zones["gap_to_zone1"]) else "N/A"
@@ -1484,114 +1458,6 @@ if user_input_symbol:
         f'<div style="font-size:14px;color:#991b1b;line-height:1.8;">{bear_scenario}</div></div>',
         unsafe_allow_html=True,
     )
-
-
-    # ── AI 투자 요약 ──
-    st.markdown("<div style='font-size:16px;font-weight:800;color:#0f172a;margin-top:10px;margin-bottom:12px;'>🤖 AI 투자 요약</div>", unsafe_allow_html=True)
-    # AI 키 상태 확인
-    _has_claude  = bool(st.secrets.get("ANTHROPIC_API_KEY", "")) if hasattr(st, "secrets") else False
-    _has_gpt     = bool(st.secrets.get("OPENAI_API_KEY", ""))    if hasattr(st, "secrets") else False
-    _has_gemini  = bool(st.secrets.get("GEMINI_API_KEY", ""))    if hasattr(st, "secrets") else False
-    _any_key = _has_claude or _has_gpt or _has_gemini
-
-    if not _any_key:
-        st.info("💡 AI 분석을 활성화하려면 Streamlit Secrets에 API 키를 추가해주세요.\n`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`")
-
-    if st.button("✨ AI 분석 생성 (3개 AI 비교)", key="us_ai_btn", use_container_width=True, disabled=not _any_key):
-        _pbr  = info.get("priceToBook")
-        _fpe  = info.get("forwardPE")
-        _roe  = info.get("returnOnEquity")
-        _rev  = info.get("revenueGrowth")
-        _opm  = info.get("operatingMargins")
-
-        _prompt = f"""당신은 미국 주식 전문 퀀트 애널리스트입니다.
-다음 데이터를 바탕으로 투자자가 바로 이해할 수 있는 실전형 AI 요약을 한국어로 작성해주세요.
-
-종목: {short_name} ({ticker}) / {asset["sector"]}
-현재가: {fmt_price(current_price)} ({pct_change:+.2f}%)
-등급: {us_grade["grade"]} / 점수: {us_grade["score"]}점
-점수근거: {", ".join(us_grade["reasons"])}
-PBR: {f"{_pbr:.2f}x" if is_valid_number(_pbr) else "N/A"} / Forward PE: {f"{_fpe:.1f}x" if is_valid_number(_fpe) else "N/A"}
-PEG: {f"{sh.get('peg'):.2f}" if sh.get('peg') else "N/A"} / ROE: {fmt_ratio_pct(_roe)}
-OPM: {fmt_ratio_pct(_opm)} / 매출성장: {fmt_ratio_pct(_rev)}
-모멘텀 6M: {f"{mo.get('r6m'):+.1f}%" if mo.get('r6m') else "N/A"} / 12M: {f"{mo.get('r12m'):+.1f}%" if mo.get('r12m') else "N/A"}
-Beta: {f"{ri.get('beta'):.2f}" if ri.get('beta') else "N/A"} / Sharpe: {f"{ri.get('sharpe'):.2f}" if ri.get('sharpe') else "N/A"} / MDD: {f"{mdd:.1f}%" if is_valid_number(mdd) else "N/A"}
-애널리스트 목표가: {fmt_price(analyst_data.get("target_mean"))} / 컨센서스: {analyst_data.get("rec_key","N/A")}
-공매도: {f"{short_data.get('short_pct'):.1f}%" if short_data.get("short_pct") else "N/A"}
-
-작성 지침:
-1. 현재 상태 한 줄 요약
-2. 강점 2~3가지 (수치 포함)
-3. 주의사항 1~2가지 (수치 포함)
-4. 단기/중기 행동 제안 각 1문장
-5. 300자 내외, 한국어, 전문적이되 친근하게
-6. 마지막에 "(본 요약은 AI 생성 참고용이며 투자 권유가 아닙니다)" 포함"""
-
-        import requests as _req, concurrent.futures as _cf
-
-        def _call_claude(prompt):
-            try:
-                r = _req.post("https://api.anthropic.com/v1/messages",
-                    headers={"Content-Type":"application/json",
-                             "x-api-key": st.secrets.get("ANTHROPIC_API_KEY",""),
-                             "anthropic-version":"2023-06-01"},
-                    json={"model":"claude-sonnet-4-20250514","max_tokens":800,
-                          "messages":[{"role":"user","content":prompt}]}, timeout=30)
-                d = r.json()
-                return "".join(b["text"] for b in d.get("content",[]) if b.get("type")=="text")
-            except Exception as e:
-                return f"오류: {e}"
-
-        def _call_gpt(prompt):
-            try:
-                r = _req.post("https://api.openai.com/v1/chat/completions",
-                    headers={"Content-Type":"application/json",
-                             "Authorization":f"Bearer {st.secrets.get('OPENAI_API_KEY','')}"},
-                    json={"model":"gpt-4o-mini","max_tokens":800,
-                          "messages":[{"role":"user","content":prompt}]}, timeout=30)
-                d = r.json()
-                return d["choices"][0]["message"]["content"]
-            except Exception as e:
-                return f"오류: {e}"
-
-        def _call_gemini(prompt):
-            try:
-                _key = st.secrets.get("GEMINI_API_KEY","")
-                r = _req.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={_key}",
-                    headers={"Content-Type":"application/json"},
-                    json={"contents":[{"parts":[{"text":prompt}]}],
-                          "generationConfig":{"maxOutputTokens":800}}, timeout=30)
-                d = r.json()
-                return d["candidates"][0]["content"]["parts"][0]["text"]
-            except Exception as e:
-                return f"오류: {e}"
-
-        _ai_list = []
-        if _has_claude:  _ai_list.append(("🟠 Claude",  _call_claude))
-        if _has_gpt:     _ai_list.append(("🟢 ChatGPT", _call_gpt))
-        if _has_gemini:  _ai_list.append(("🔵 Gemini",  _call_gemini))
-
-        with st.spinner("AI 분석 중... (최대 30초)"):
-            with _cf.ThreadPoolExecutor(max_workers=3) as _ex:
-                _futures = {name: _ex.submit(fn, _prompt) for name, fn in _ai_list}
-            _results = {name: fut.result() for name, fut in _futures.items()}
-
-        for _ai_name, _text in _results.items():
-            _color_map  = {"🟠 Claude": "#fff7ed", "🟢 ChatGPT": "#f0fdf4", "🔵 Gemini": "#eff6ff"}
-            _border_map = {"🟠 Claude": "#fed7aa", "🟢 ChatGPT": "#bbf7d0", "🔵 Gemini": "#bfdbfe"}
-            _title_map  = {"🟠 Claude": "#c2410c", "🟢 ChatGPT": "#166534", "🔵 Gemini": "#1e40af"}
-            _bg = _color_map.get(_ai_name, "#f8fafc")
-            _bd = _border_map.get(_ai_name, "#e2e8f0")
-            _tc = _title_map.get(_ai_name, "#0f172a")
-            st.markdown(
-                f'<div style="background:{_bg};border:1px solid {_bd};border-radius:14px;'
-                f'padding:16px;margin-bottom:12px;">'
-                f'<div style="font-weight:900;font-size:14px;color:{_tc};margin-bottom:10px;">{_ai_name}</div>'
-                f'<div style="font-size:13px;color:#374151;line-height:1.9;white-space:pre-wrap;">{_text}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
 
     # ── 등급 가이드
     with st.expander("📖 등급 기준 가이드"):
