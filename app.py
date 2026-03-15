@@ -12,7 +12,7 @@ import yfinance as yf
 # 1. Page Config
 # =========================================================
 st.set_page_config(
-    page_title="뀨의 미국 주식 분석",
+    page_title="실전 투자 리포트",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -455,6 +455,153 @@ def compute_shareholder(info):
     }
 
 
+
+
+# =========================================================
+# 11b. 애널리스트 의견 분포
+# =========================================================
+@st.cache_data(ttl=3600)
+def fetch_analyst_info(ticker_symbol: str) -> Dict[str, Any]:
+    try:
+        t = yf.Ticker(ticker_symbol)
+        info = t.info or {}
+        result = {
+            "target_high":   info.get("targetHighPrice"),
+            "target_low":    info.get("targetLowPrice"),
+            "target_mean":   info.get("targetMeanPrice"),
+            "target_median": info.get("targetMedianPrice"),
+            "rec_mean":      info.get("recommendationMean"),
+            "rec_key":       info.get("recommendationKey", ""),
+            "num_analysts":  info.get("numberOfAnalystOpinions"),
+            "strong_buy":    None,
+            "buy":           None,
+            "hold":          None,
+            "sell":          None,
+            "strong_sell":   None,
+        }
+        # 상세 의견 수
+        try:
+            rec_df = t.recommendations_summary
+            if rec_df is not None and not rec_df.empty:
+                latest = rec_df.iloc[0]
+                result["strong_buy"]  = int(latest.get("strongBuy", 0)  or 0)
+                result["buy"]         = int(latest.get("buy", 0)         or 0)
+                result["hold"]        = int(latest.get("hold", 0)        or 0)
+                result["sell"]        = int(latest.get("sell", 0)        or 0)
+                result["strong_sell"] = int(latest.get("strongSell", 0)  or 0)
+        except Exception:
+            pass
+        return result
+    except Exception:
+        return {}
+
+
+# =========================================================
+# 11c. 실적 서프라이즈 (최근 4분기)
+# =========================================================
+@st.cache_data(ttl=3600)
+def fetch_earnings_surprise(ticker_symbol: str) -> list:
+    try:
+        t = yf.Ticker(ticker_symbol)
+        hist = t.earnings_history
+        if hist is None or (hasattr(hist, "empty") and hist.empty):
+            return []
+        rows = []
+        df = hist if isinstance(hist, pd.DataFrame) else pd.DataFrame(hist)
+        df = df.sort_index(ascending=False).head(4)
+        for idx, row in df.iterrows():
+            eps_est    = row.get("epsEstimate")    or row.get("EPS Estimate")
+            eps_actual = row.get("epsActual")      or row.get("Reported EPS")
+            surprise   = row.get("epsDifference")  or row.get("Surprise(%)")
+            date_str   = str(idx)[:10] if idx else "N/A"
+            rows.append({
+                "date":       date_str,
+                "eps_est":    float(eps_est)    if is_valid_number(eps_est)    else None,
+                "eps_actual": float(eps_actual) if is_valid_number(eps_actual) else None,
+                "surprise":   float(surprise)   if is_valid_number(surprise)   else None,
+            })
+        return rows
+    except Exception:
+        return []
+
+
+# =========================================================
+# 11d. 섹터 ETF 대비 상대 수익률
+# =========================================================
+SECTOR_ETF_MAP = {
+    "Technology":             "XLK",
+    "Healthcare":             "XLV",
+    "Financial Services":     "XLF",
+    "Consumer Cyclical":      "XLY",
+    "Consumer Defensive":     "XLP",
+    "Energy":                 "XLE",
+    "Industrials":            "XLI",
+    "Basic Materials":        "XLB",
+    "Real Estate":            "XLRE",
+    "Utilities":              "XLU",
+    "Communication Services": "XLC",
+}
+
+@st.cache_data(ttl=900)
+def fetch_sector_relative(ticker_symbol: str, sector: str) -> Dict[str, Any]:
+    etf = SECTOR_ETF_MAP.get(sector)
+    if not etf:
+        return {"available": False, "reason": f"섹터 ETF 매핑 없음 ({sector})"}
+    try:
+        stock_df = yf.Ticker(ticker_symbol).history(period="1y")["Close"].dropna()
+        etf_df   = yf.Ticker(etf).history(period="1y")["Close"].dropna()
+        if len(stock_df) < 20 or len(etf_df) < 20:
+            return {"available": False, "reason": "데이터 부족"}
+        def ret(series, days):
+            if len(series) > days:
+                return (float(series.iloc[-1]) / float(series.iloc[-days]) - 1) * 100
+            return None
+        result = {
+            "available": True,
+            "etf":       etf,
+            "stock_1m":  ret(stock_df, 21),  "etf_1m":  ret(etf_df, 21),
+            "stock_3m":  ret(stock_df, 63),  "etf_3m":  ret(etf_df, 63),
+            "stock_6m":  ret(stock_df, 126), "etf_6m":  ret(etf_df, 126),
+            "stock_12m": ret(stock_df, 252), "etf_12m": ret(etf_df, 252),
+        }
+        # 상대 수익률
+        for p in ["1m", "3m", "6m", "12m"]:
+            s, e = result[f"stock_{p}"], result[f"etf_{p}"]
+            result[f"rel_{p}"] = (s - e) if s is not None and e is not None else None
+        return result
+    except Exception as ex:
+        return {"available": False, "reason": str(ex)}
+
+
+# =========================================================
+# 11e. 공매도 비율
+# =========================================================
+@st.cache_data(ttl=3600)
+def fetch_short_info(ticker_symbol: str) -> Dict[str, Any]:
+    try:
+        info = yf.Ticker(ticker_symbol).info or {}
+        shares_out  = info.get("sharesOutstanding") or info.get("impliedSharesOutstanding")
+        short_int   = info.get("sharesShort")
+        short_ratio = info.get("shortRatio")
+        short_pct   = info.get("shortPercentOfFloat")
+        short_prev  = info.get("sharesShortPriorMonth")
+        short_date  = info.get("dateShortInterest")
+
+        pct_calc = None
+        if is_valid_number(short_int) and is_valid_number(shares_out) and shares_out > 0:
+            pct_calc = float(short_int) / float(shares_out) * 100
+
+        return {
+            "available":   short_int is not None,
+            "short_int":   short_int,
+            "short_pct":   float(short_pct * 100) if is_valid_number(short_pct) else pct_calc,
+            "short_ratio": short_ratio,
+            "short_prev":  short_prev,
+            "short_date":  fmt_date_from_timestamp(short_date),
+        }
+    except Exception:
+        return {"available": False}
+
 # =========================================================
 # 12. Support / Resistance / Strategy / Scenario
 # =========================================================
@@ -635,7 +782,7 @@ if user_input_symbol:
     pbr_mod  = compute_pbr_module(info)
 
     status.text("📊 모멘텀 / 리스크 / 주주환원 분석 중...")
-    progress.progress(60)
+    progress.progress(55)
     trend_col   = meta["trend_price_col"]
     display_col = meta["display_price_col"]
     data_len    = meta["data_len"]
@@ -646,6 +793,13 @@ if user_input_symbol:
     mo  = compute_momentum(df, trend_col)
     ri  = compute_risk(df, trend_col)
     sh  = compute_shareholder(info)
+
+    status.text("🔍 애널리스트 / 실적 / 섹터 비교 분석 중...")
+    progress.progress(70)
+    analyst_data  = fetch_analyst_info(ticker)
+    earnings_data = fetch_earnings_surprise(ticker)
+    sector_rel    = fetch_sector_relative(ticker, asset["sector"])
+    short_data    = fetch_short_info(ticker)
 
     status.text("🧮 분석 완료 중...")
     progress.progress(85)
@@ -832,6 +986,178 @@ if user_input_symbol:
         ri_rel = reliability_badge("high" if ri["beta"] is not None and ri["sharpe"] is not None else "mid")
         st.markdown(render_info_card(f"⚠️ Risk {ri_rel}", f"Beta {beta_str}",
             "<br>".join(ri_lines) + "<br><b>해석:</b> Beta>1 시장보다 변동 큼 / Sharpe>1 양호한 위험 대비 수익"), unsafe_allow_html=True)
+
+
+    # ── 애널리스트 의견 분포 (신규)
+    if not asset["is_index"] and analyst_data:
+        t_mean = analyst_data.get("target_mean")
+        t_high = analyst_data.get("target_high")
+        t_low  = analyst_data.get("target_low")
+        rec    = analyst_data.get("rec_key", "").replace("_", " ").title()
+        n_ana  = analyst_data.get("num_analysts")
+        sb = analyst_data.get("strong_buy")  or 0
+        b  = analyst_data.get("buy")         or 0
+        h  = analyst_data.get("hold")        or 0
+        s  = analyst_data.get("sell")        or 0
+        ss = analyst_data.get("strong_sell") or 0
+        total_votes = sb + b + h + s + ss
+
+        upside_str = ""
+        if is_valid_number(t_mean) and current_price > 0:
+            upside = (float(t_mean) - current_price) / current_price * 100
+            color  = "#16a34a" if upside >= 0 else "#dc2626"
+            upside_str = f' <span style="color:{color};font-weight:700;">({upside:+.1f}%)</span>'
+
+        vote_html = ""
+        if total_votes > 0:
+            bar_items = [
+                (sb, "#166534", "Strong Buy"),
+                (b,  "#2563eb", "Buy"),
+                (h,  "#ca8a04", "Hold"),
+                (s,  "#ea580c", "Sell"),
+                (ss, "#dc2626", "Strong Sell"),
+            ]
+            bars = "".join([
+                f'<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">'
+                f'<div style="font-size:11px;color:#64748b;width:72px;">{lbl}</div>'
+                f'<div style="flex:1;background:#f1f5f9;border-radius:4px;height:10px;">'
+                f'<div style="width:{cnt/total_votes*100:.0f}%;background:{col};height:10px;border-radius:4px;"></div></div>'
+                f'<div style="font-size:11px;font-weight:700;color:{col};width:20px;text-align:right;">{cnt}</div>'
+                f'</div>'
+                for cnt, col, lbl in bar_items if cnt > 0
+            ])
+            vote_html = f'<div style="margin-top:10px;">{bars}</div>'
+
+        ana_desc = (
+            f'목표가 범위: {fmt_price(t_low)} ~ {fmt_price(t_high)}<br>'
+            f'평균 목표가: <b>{fmt_price(t_mean)}</b>{upside_str}<br>'
+            f'컨센서스: <b>{rec}</b> ({n_ana}명 참여)'
+            if is_valid_number(t_mean) else "애널리스트 데이터를 불러오지 못했습니다."
+        )
+        st.markdown(
+            render_info_card(
+                f"🎯 애널리스트 의견 {reliability_badge('mid')}",
+                fmt_price(t_mean) + upside_str if is_valid_number(t_mean) else "N/A",
+                ana_desc + vote_html,
+            ),
+            unsafe_allow_html=True,
+        )
+
+    # ── 실적 서프라이즈 (신규)
+    if not asset["is_index"] and not asset["is_etf_like"] and earnings_data:
+        rows_html = ""
+        for e in earnings_data:
+            if e["eps_actual"] is None and e["eps_est"] is None:
+                continue
+            surp = e["surprise"]
+            surp_color = "#16a34a" if surp and surp >= 0 else "#dc2626"
+            surp_str   = f'<span style="color:{surp_color};font-weight:700;">{surp:+.2f}</span>' if surp is not None else "N/A"
+            rows_html += (
+                f'<tr style="border-bottom:1px solid #f1f5f9;">'
+                f'<td style="padding:7px 8px;font-size:12px;color:#64748b;">{e["date"]}</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;">'
+                f'{"$"+f'{e["eps_est"]:.2f}' if e["eps_est"] is not None else "N/A"}</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;font-weight:700;">'
+                f'{"$"+f'{e["eps_actual"]:.2f}' if e["eps_actual"] is not None else "N/A"}</td>'
+                f'<td style="padding:7px 8px;text-align:right;">{surp_str}</td>'
+                f'</tr>'
+            )
+        if rows_html:
+            table_html = (
+                f'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+                f'<thead><tr style="border-bottom:2px solid #e2e8f0;">'
+                f'<th style="padding:6px 8px;text-align:left;color:#64748b;font-size:11px;">분기</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">EPS 예상</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">EPS 실제</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">서프라이즈</th>'
+                f'</tr></thead><tbody>{rows_html}</tbody></table>'
+            )
+            st.markdown(
+                render_info_card(
+                    f"📋 실적 서프라이즈 (최근 4분기) {reliability_badge('mid')}",
+                    "",
+                    table_html,
+                ),
+                unsafe_allow_html=True,
+            )
+
+    # ── 섹터 ETF 대비 성과 (신규)
+    if sector_rel.get("available"):
+        etf_name = sector_rel["etf"]
+        def rel_row(period, label):
+            s = sector_rel.get(f"stock_{period}")
+            e = sector_rel.get(f"etf_{period}")
+            r = sector_rel.get(f"rel_{period}")
+            if s is None: return ""
+            sc = "#16a34a" if s >= 0 else "#dc2626"
+            ec = "#16a34a" if e is not None and e >= 0 else "#dc2626"
+            rc = "#16a34a" if r is not None and r >= 0 else "#dc2626"
+            e_str = f'<span style="color:{ec};">{e:+.1f}%</span>' if e is not None else "N/A"
+            r_str = f'<span style="color:{rc};font-weight:700;">{r:+.1f}%</span>' if r is not None else "N/A"
+            return (
+                f'<tr style="border-bottom:1px solid #f1f5f9;">'
+                f'<td style="padding:7px 8px;font-size:12px;color:#64748b;">{label}</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;color:{sc};font-weight:700;">{s:+.1f}%</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;">{e_str}</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;">{r_str}</td>'
+                f'</tr>'
+            )
+        rows = "".join([rel_row(p, l) for p, l in [("1m","1개월"),("3m","3개월"),("6m","6개월"),("12m","12개월")]])
+        if rows:
+            table = (
+                f'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+                f'<thead><tr style="border-bottom:2px solid #e2e8f0;">'
+                f'<th style="padding:6px 8px;text-align:left;color:#64748b;font-size:11px;">기간</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">종목</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">{etf_name}</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">상대 성과</th>'
+                f'</tr></thead><tbody>{rows}</tbody></table>'
+            )
+            st.markdown(
+                render_info_card(
+                    f"📈 섹터 ETF({etf_name}) 대비 성과 {reliability_badge('high')}",
+                    "",
+                    table,
+                ),
+                unsafe_allow_html=True,
+            )
+
+    # ── 공매도 비율 (신규)
+    if short_data.get("available"):
+        short_pct   = short_data.get("short_pct")
+        short_ratio = short_data.get("short_ratio")
+        short_prev  = short_data.get("short_prev")
+        short_int   = short_data.get("short_int")
+        short_date  = short_data.get("short_date")
+
+        if short_pct is not None:
+            if   short_pct >= 20: short_lvl = "🔴 매우 높음 (숏 스퀴즈 주의)"
+            elif short_pct >= 10: short_lvl = "🟠 높음"
+            elif short_pct >= 5:  short_lvl = "🟡 보통"
+            else:                 short_lvl = "🟢 낮음"
+        else:
+            short_lvl = "N/A"
+
+        change_html = ""
+        if short_prev is not None and short_int is not None and is_valid_number(short_prev) and float(short_prev) > 0:
+            chg = (float(short_int) - float(short_prev)) / float(short_prev) * 100
+            col = "#dc2626" if chg > 0 else "#16a34a"
+            change_html = f'<br>전월 대비: <span style="color:{col};font-weight:700;">{chg:+.1f}%</span>'
+
+        short_desc = (
+            f'공매도 비율: <b>{short_pct:.1f}%</b><br>'
+            f'공매도 잔고: <b>{fmt_large_dollar(short_int)}</b>{change_html}<br>'
+            + (f'Days to Cover: <b>{short_ratio:.1f}일</b><br>' if is_valid_number(short_ratio) else "")
+            + f'기준일: {short_date}'
+        )
+        st.markdown(
+            render_info_card(
+                f"⚡ 공매도 현황 {reliability_badge('mid')}",
+                f"{short_pct:.1f}%  {short_lvl}" if short_pct is not None else "N/A",
+                short_desc,
+            ),
+            unsafe_allow_html=True,
+        )
 
     # ── MA200 / RSI
     col_t1, col_t2 = st.columns(2)
