@@ -1414,6 +1414,95 @@ if user_input_symbol:
     with srisk:
         st.markdown(f"<div class='scenario-bear'><div style='font-weight:900;font-size:15px;margin-bottom:8px;'>약세 시나리오</div><div>{bear_scenario}</div></div>", unsafe_allow_html=True)
 
+
+    # ── AI 투자 요약 ──
+    st.markdown("<div style='font-size:16px;font-weight:800;color:#0f172a;margin-top:10px;margin-bottom:12px;'>🤖 AI 투자 요약</div>", unsafe_allow_html=True)
+    if st.button("✨ AI 분석 생성", key="us_ai_btn", use_container_width=True):
+        with st.spinner("Claude가 분석 중입니다..."):
+            try:
+                import requests as _req
+
+                _pbr   = info.get("priceToBook")
+                _fpe   = info.get("forwardPE")
+                _roe   = info.get("returnOnEquity")
+                _rev   = info.get("revenueGrowth")
+                _opm   = info.get("operatingMargins")
+
+                prompt = f"""You are a professional equity research analyst. Based on the following data, write a concise AI investment summary in Korean for retail investors.
+
+[Stock Info]
+- Name: {short_name} ({ticker})
+- Sector: {asset["sector"]} / {asset["industry"]}
+- Current Price: {fmt_price(current_price)} ({pct_change:+.2f}%)
+
+[Overall Grade]
+- Grade: {us_grade["grade"]} / Score: {us_grade["score"]}
+- Reasons: {", ".join(us_grade["reasons"])}
+
+[Valuation]
+- PBR: {f"{_pbr:.2f}x" if is_valid_number(_pbr) else "N/A"}
+- Forward PE: {f"{_fpe:.1f}x" if is_valid_number(_fpe) else "N/A"}
+- PEG: {f"{sh.get('peg'):.2f}" if sh.get("peg") else "N/A"}
+
+[Quality]
+- ROE: {fmt_ratio_pct(_roe)}
+- Operating Margin: {fmt_ratio_pct(_opm)}
+- Revenue Growth: {fmt_ratio_pct(_rev)}
+
+[Momentum]
+- 1M: {f"{mo.get('r1m'):+.1f}%" if mo.get('r1m') else "N/A"}
+- 6M: {f"{mo.get('r6m'):+.1f}%" if mo.get('r6m') else "N/A"}
+- 12M: {f"{mo.get('r12m'):+.1f}%" if mo.get('r12m') else "N/A"}
+- vs 200MA: {f"{mo.get('ma200_gap'):+.1f}%" if mo.get('ma200_gap') else "N/A"}
+
+[Risk]
+- Beta: {f"{ri.get('beta'):.2f}" if ri.get('beta') else "N/A"}
+- Volatility: {f"{ri.get('vol_1y'):.1f}%" if ri.get('vol_1y') else "N/A"}
+- Sharpe: {f"{ri.get('sharpe'):.2f}" if ri.get('sharpe') else "N/A"}
+- MDD: {f"{mdd:.1f}%" if is_valid_number(mdd) else "N/A"}
+
+[Analyst Consensus]
+- Mean Target: {fmt_price(analyst_data.get("target_mean"))}
+- Recommendation: {analyst_data.get("rec_key","N/A")}
+
+[Short Interest]
+- Short %: {f"{short_data.get('short_pct'):.1f}%" if short_data.get("short_pct") else "N/A"}
+
+[Instructions]
+1. **현재 상태 한 줄 요약** (핵심 특징)
+2. **강점** 2~3가지 (구체적 수치 포함)
+3. **주의사항** 1~2가지 (구체적 수치 포함)
+4. **투자자 행동 제안** (단기/중기 각 1~2문장)
+5. 전체 300~400자, 한국어, 전문적이되 친근하게
+6. 마지막에 "(본 요약은 AI 생성 참고용이며 투자 권유가 아닙니다)" 포함"""
+
+                _resp = _req.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={"Content-Type": "application/json"},
+                    json={
+                        "model": "claude-sonnet-4-20250514",
+                        "max_tokens": 1000,
+                        "messages": [{"role": "user", "content": prompt}]
+                    },
+                    timeout=30,
+                )
+                _data = _resp.json()
+                _text = "".join(
+                    b["text"] for b in _data.get("content", []) if b.get("type") == "text"
+                )
+                if _text:
+                    st.markdown(
+                        f'<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:14px;'
+                        f'padding:18px;font-size:14px;color:#0c4a6e;line-height:1.9;white-space:pre-wrap;">' +
+                        _text +
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.warning("AI 응답을 받지 못했습니다.")
+            except Exception as _e:
+                st.error(f"AI 분석 오류: {_e}")
+
     # ── 등급 가이드
     with st.expander("📖 등급 기준 가이드"):
         st.markdown(
