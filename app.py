@@ -12,7 +12,7 @@ import yfinance as yf
 # 1. Page Config
 # =========================================================
 st.set_page_config(
-    page_title="실전 투자 리포트",
+    page_title="뀨의 미국 주식 분석",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
