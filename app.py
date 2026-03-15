@@ -12,7 +12,7 @@ import yfinance as yf
 # 1. Page Config
 # =========================================================
 st.set_page_config(
-    page_title="뀨의 미국주식 분석",
+    page_title="실전 투자 리포트",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -1488,98 +1488,110 @@ if user_input_symbol:
 
     # ── AI 투자 요약 ──
     st.markdown("<div style='font-size:16px;font-weight:800;color:#0f172a;margin-top:10px;margin-bottom:12px;'>🤖 AI 투자 요약</div>", unsafe_allow_html=True)
-    _api_key_check = st.secrets.get("ANTHROPIC_API_KEY", "") if hasattr(st, "secrets") else ""
-    if not _api_key_check:
-        st.info("💡 AI 분석을 활성화하려면 Streamlit Cloud → Settings → Secrets에 `ANTHROPIC_API_KEY = \"sk-ant-...\"` 를 추가해주세요.")
-    if st.button("✨ AI 분석 생성", key="us_ai_btn", use_container_width=True, disabled=not _api_key_check):
-        with st.spinner("Claude가 분석 중입니다..."):
-            try:
-                import requests as _req
+    # AI 키 상태 확인
+    _has_claude  = bool(st.secrets.get("ANTHROPIC_API_KEY", "")) if hasattr(st, "secrets") else False
+    _has_gpt     = bool(st.secrets.get("OPENAI_API_KEY", ""))    if hasattr(st, "secrets") else False
+    _has_gemini  = bool(st.secrets.get("GEMINI_API_KEY", ""))    if hasattr(st, "secrets") else False
+    _any_key = _has_claude or _has_gpt or _has_gemini
 
-                _pbr   = info.get("priceToBook")
-                _fpe   = info.get("forwardPE")
-                _roe   = info.get("returnOnEquity")
-                _rev   = info.get("revenueGrowth")
-                _opm   = info.get("operatingMargins")
+    if not _any_key:
+        st.info("💡 AI 분석을 활성화하려면 Streamlit Secrets에 API 키를 추가해주세요.\n`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`")
 
-                prompt = f"""You are a professional equity research analyst. Based on the following data, write a concise AI investment summary in Korean for retail investors.
+    if st.button("✨ AI 분석 생성 (3개 AI 비교)", key="us_ai_btn", use_container_width=True, disabled=not _any_key):
+        _pbr  = info.get("priceToBook")
+        _fpe  = info.get("forwardPE")
+        _roe  = info.get("returnOnEquity")
+        _rev  = info.get("revenueGrowth")
+        _opm  = info.get("operatingMargins")
 
-[Stock Info]
-- Name: {short_name} ({ticker})
-- Sector: {asset["sector"]} / {asset["industry"]}
-- Current Price: {fmt_price(current_price)} ({pct_change:+.2f}%)
+        _prompt = f"""당신은 미국 주식 전문 퀀트 애널리스트입니다.
+다음 데이터를 바탕으로 투자자가 바로 이해할 수 있는 실전형 AI 요약을 한국어로 작성해주세요.
 
-[Overall Grade]
-- Grade: {us_grade["grade"]} / Score: {us_grade["score"]}
-- Reasons: {", ".join(us_grade["reasons"])}
+종목: {short_name} ({ticker}) / {asset["sector"]}
+현재가: {fmt_price(current_price)} ({pct_change:+.2f}%)
+등급: {us_grade["grade"]} / 점수: {us_grade["score"]}점
+점수근거: {", ".join(us_grade["reasons"])}
+PBR: {f"{_pbr:.2f}x" if is_valid_number(_pbr) else "N/A"} / Forward PE: {f"{_fpe:.1f}x" if is_valid_number(_fpe) else "N/A"}
+PEG: {f"{sh.get('peg'):.2f}" if sh.get('peg') else "N/A"} / ROE: {fmt_ratio_pct(_roe)}
+OPM: {fmt_ratio_pct(_opm)} / 매출성장: {fmt_ratio_pct(_rev)}
+모멘텀 6M: {f"{mo.get('r6m'):+.1f}%" if mo.get('r6m') else "N/A"} / 12M: {f"{mo.get('r12m'):+.1f}%" if mo.get('r12m') else "N/A"}
+Beta: {f"{ri.get('beta'):.2f}" if ri.get('beta') else "N/A"} / Sharpe: {f"{ri.get('sharpe'):.2f}" if ri.get('sharpe') else "N/A"} / MDD: {f"{mdd:.1f}%" if is_valid_number(mdd) else "N/A"}
+애널리스트 목표가: {fmt_price(analyst_data.get("target_mean"))} / 컨센서스: {analyst_data.get("rec_key","N/A")}
+공매도: {f"{short_data.get('short_pct'):.1f}%" if short_data.get("short_pct") else "N/A"}
 
-[Valuation]
-- PBR: {f"{_pbr:.2f}x" if is_valid_number(_pbr) else "N/A"}
-- Forward PE: {f"{_fpe:.1f}x" if is_valid_number(_fpe) else "N/A"}
-- PEG: {f"{sh.get('peg'):.2f}" if sh.get("peg") else "N/A"}
-
-[Quality]
-- ROE: {fmt_ratio_pct(_roe)}
-- Operating Margin: {fmt_ratio_pct(_opm)}
-- Revenue Growth: {fmt_ratio_pct(_rev)}
-
-[Momentum]
-- 1M: {f"{mo.get('r1m'):+.1f}%" if mo.get('r1m') else "N/A"}
-- 6M: {f"{mo.get('r6m'):+.1f}%" if mo.get('r6m') else "N/A"}
-- 12M: {f"{mo.get('r12m'):+.1f}%" if mo.get('r12m') else "N/A"}
-- vs 200MA: {f"{mo.get('ma200_gap'):+.1f}%" if mo.get('ma200_gap') else "N/A"}
-
-[Risk]
-- Beta: {f"{ri.get('beta'):.2f}" if ri.get('beta') else "N/A"}
-- Volatility: {f"{ri.get('vol_1y'):.1f}%" if ri.get('vol_1y') else "N/A"}
-- Sharpe: {f"{ri.get('sharpe'):.2f}" if ri.get('sharpe') else "N/A"}
-- MDD: {f"{mdd:.1f}%" if is_valid_number(mdd) else "N/A"}
-
-[Analyst Consensus]
-- Mean Target: {fmt_price(analyst_data.get("target_mean"))}
-- Recommendation: {analyst_data.get("rec_key","N/A")}
-
-[Short Interest]
-- Short %: {f"{short_data.get('short_pct'):.1f}%" if short_data.get("short_pct") else "N/A"}
-
-[Instructions]
-1. **현재 상태 한 줄 요약** (핵심 특징)
-2. **강점** 2~3가지 (구체적 수치 포함)
-3. **주의사항** 1~2가지 (구체적 수치 포함)
-4. **투자자 행동 제안** (단기/중기 각 1~2문장)
-5. 전체 300~400자, 한국어, 전문적이되 친근하게
+작성 지침:
+1. 현재 상태 한 줄 요약
+2. 강점 2~3가지 (수치 포함)
+3. 주의사항 1~2가지 (수치 포함)
+4. 단기/중기 행동 제안 각 1문장
+5. 300자 내외, 한국어, 전문적이되 친근하게
 6. 마지막에 "(본 요약은 AI 생성 참고용이며 투자 권유가 아닙니다)" 포함"""
 
-                _resp = _req.post(
-                    "https://api.anthropic.com/v1/messages",
-                    headers={
-                        "Content-Type": "application/json",
-                        "x-api-key": st.secrets.get("ANTHROPIC_API_KEY", ""),
-                        "anthropic-version": "2023-06-01",
-                    },
-                    json={
-                        "model": "claude-sonnet-4-20250514",
-                        "max_tokens": 1000,
-                        "messages": [{"role": "user", "content": prompt}]
-                    },
-                    timeout=30,
-                )
-                _data = _resp.json()
-                _text = "".join(
-                    b["text"] for b in _data.get("content", []) if b.get("type") == "text"
-                )
-                if _text:
-                    st.markdown(
-                        f'<div style="background:#f0f9ff;border:1px solid #7dd3fc;border-radius:14px;'
-                        f'padding:18px;font-size:14px;color:#0c4a6e;line-height:1.9;white-space:pre-wrap;">' +
-                        _text +
-                        '</div>',
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.warning("AI 응답을 받지 못했습니다.")
-            except Exception as _e:
-                st.error(f"AI 분석 오류: {_e}")
+        import requests as _req, concurrent.futures as _cf
+
+        def _call_claude(prompt):
+            try:
+                r = _req.post("https://api.anthropic.com/v1/messages",
+                    headers={"Content-Type":"application/json",
+                             "x-api-key": st.secrets.get("ANTHROPIC_API_KEY",""),
+                             "anthropic-version":"2023-06-01"},
+                    json={"model":"claude-sonnet-4-20250514","max_tokens":800,
+                          "messages":[{"role":"user","content":prompt}]}, timeout=30)
+                d = r.json()
+                return "".join(b["text"] for b in d.get("content",[]) if b.get("type")=="text")
+            except Exception as e:
+                return f"오류: {e}"
+
+        def _call_gpt(prompt):
+            try:
+                r = _req.post("https://api.openai.com/v1/chat/completions",
+                    headers={"Content-Type":"application/json",
+                             "Authorization":f"Bearer {st.secrets.get('OPENAI_API_KEY','')}"},
+                    json={"model":"gpt-4o-mini","max_tokens":800,
+                          "messages":[{"role":"user","content":prompt}]}, timeout=30)
+                d = r.json()
+                return d["choices"][0]["message"]["content"]
+            except Exception as e:
+                return f"오류: {e}"
+
+        def _call_gemini(prompt):
+            try:
+                _key = st.secrets.get("GEMINI_API_KEY","")
+                r = _req.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={_key}",
+                    headers={"Content-Type":"application/json"},
+                    json={"contents":[{"parts":[{"text":prompt}]}],
+                          "generationConfig":{"maxOutputTokens":800}}, timeout=30)
+                d = r.json()
+                return d["candidates"][0]["content"]["parts"][0]["text"]
+            except Exception as e:
+                return f"오류: {e}"
+
+        _ai_list = []
+        if _has_claude:  _ai_list.append(("🟠 Claude",  _call_claude))
+        if _has_gpt:     _ai_list.append(("🟢 ChatGPT", _call_gpt))
+        if _has_gemini:  _ai_list.append(("🔵 Gemini",  _call_gemini))
+
+        with st.spinner("AI 분석 중... (최대 30초)"):
+            with _cf.ThreadPoolExecutor(max_workers=3) as _ex:
+                _futures = {name: _ex.submit(fn, _prompt) for name, fn in _ai_list}
+            _results = {name: fut.result() for name, fut in _futures.items()}
+
+        for _ai_name, _text in _results.items():
+            _color_map  = {"🟠 Claude": "#fff7ed", "🟢 ChatGPT": "#f0fdf4", "🔵 Gemini": "#eff6ff"}
+            _border_map = {"🟠 Claude": "#fed7aa", "🟢 ChatGPT": "#bbf7d0", "🔵 Gemini": "#bfdbfe"}
+            _title_map  = {"🟠 Claude": "#c2410c", "🟢 ChatGPT": "#166534", "🔵 Gemini": "#1e40af"}
+            _bg = _color_map.get(_ai_name, "#f8fafc")
+            _bd = _border_map.get(_ai_name, "#e2e8f0")
+            _tc = _title_map.get(_ai_name, "#0f172a")
+            st.markdown(
+                f'<div style="background:{_bg};border:1px solid {_bd};border-radius:14px;'
+                f'padding:16px;margin-bottom:12px;">'
+                f'<div style="font-weight:900;font-size:14px;color:{_tc};margin-bottom:10px;">{_ai_name}</div>'
+                f'<div style="font-size:13px;color:#374151;line-height:1.9;white-space:pre-wrap;">{_text}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
     # ── 등급 가이드
     with st.expander("📖 등급 기준 가이드"):
