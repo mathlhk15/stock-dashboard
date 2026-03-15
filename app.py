@@ -12,7 +12,7 @@ import yfinance as yf
 # 1. Page Config
 # =========================================================
 st.set_page_config(
-    page_title="뀨의 미국주식 분석",
+    page_title="실전 투자 리포트",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
@@ -1095,7 +1095,9 @@ if user_input_symbol:
         pbr_desc = "<b>상태:</b> 현재 PBR은 확인되지만, 과거 평균 PBR 대비 수준은 N/A입니다." if pbr_mod["status"] == "CURRENT_ONLY" else pbr_mod["note"]
         st.markdown(render_info_card("PBR 상대 수준", pbr_val, pbr_desc), unsafe_allow_html=True)
 
-    # ── 주주환원 카드 (신규)
+    st.markdown("### 📚 분석 카드")
+
+    # ── 주주환원 카드
     if not asset["is_index"] and not asset["is_etf_like"]:
         sh_lines = []
         if is_valid_number(sh["div_yield"]):  sh_lines.append(f"배당수익률: <b>{sh['div_yield']*100:.2f}%</b>")
@@ -1158,7 +1160,9 @@ if user_input_symbol:
             "<br>".join(ri_lines) + "<br><b>해석:</b> Beta>1 시장보다 변동 큼 / Sharpe>1 양호한 위험 대비 수익"), unsafe_allow_html=True)
 
 
-    # ── 애널리스트 의견 분포 (신규)
+    st.markdown("### 📡 시장 컨센서스")
+
+    # ── 애널리스트 의견 분포
     if not asset["is_index"] and analyst_data:
         t_mean = analyst_data.get("target_mean")
         t_high = analyst_data.get("target_high")
@@ -1213,7 +1217,7 @@ if user_input_symbol:
             unsafe_allow_html=True,
         )
 
-    # ── 실적 서프라이즈 (신규)
+    # ── 실적 서프라이즈
     if not asset["is_index"] and not asset["is_etf_like"] and earnings_data:
         rows_html = ""
         for e in earnings_data:
@@ -1251,7 +1255,7 @@ if user_input_symbol:
                 unsafe_allow_html=True,
             )
 
-    # ── 섹터 ETF 대비 성과 (신규)
+    # ── 섹터 ETF 대비 성과
     if sector_rel.get("available"):
         etf_name = sector_rel["etf"]
         def rel_row(period, label):
@@ -1292,7 +1296,54 @@ if user_input_symbol:
                 unsafe_allow_html=True,
             )
 
-    # ── 공매도 비율 (신규)
+
+    # ── S&P500 대비 성과
+    try:
+        import yfinance as _yf2
+        _spy = _yf2.Ticker("SPY").history(period="2y")["Close"].dropna()
+        _stk = df[trend_col]
+        def _ret2(s, d):
+            return (float(s.iloc[-1]) / float(s.iloc[-d]) - 1) * 100 if len(s) > d else None
+        _rows_spy = ""
+        for _d, _lbl in [(21,"1개월"),(63,"3개월"),(126,"6개월"),(252,"12개월")]:
+            _sv = _ret2(_stk, _d); _pv = _ret2(_spy, _d)
+            if _sv is None: continue
+            _rv = (_sv - _pv) if _pv is not None else None
+            _sc = "#16a34a" if _sv >= 0 else "#dc2626"
+            _pc = "#16a34a" if _pv is not None and _pv >= 0 else "#dc2626"
+            _rc = "#16a34a" if _rv is not None and _rv >= 0 else "#dc2626"
+            _p_str = f'<span style="color:{_pc};">{_pv:+.1f}%</span>' if _pv is not None else "N/A"
+            _r_str = f'<span style="color:{_rc};font-weight:700;">{_rv:+.1f}%</span>' if _rv is not None else "N/A"
+            _rows_spy += (
+                f'<tr style="border-bottom:1px solid #f1f5f9;">'
+                f'<td style="padding:7px 8px;font-size:12px;color:#64748b;">{_lbl}</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;color:{_sc};font-weight:700;">{_sv:+.1f}%</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;">{_p_str}</td>'
+                f'<td style="padding:7px 8px;font-size:12px;text-align:right;">{_r_str}</td>'
+                f'</tr>'
+            )
+        if _rows_spy:
+            _tbl_spy = (
+                f'<table style="width:100%;border-collapse:collapse;font-size:13px;">'
+                f'<thead><tr style="border-bottom:2px solid #e2e8f0;">'
+                f'<th style="padding:6px 8px;text-align:left;color:#64748b;font-size:11px;">기간</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">종목</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">S&P500(SPY)</th>'
+                f'<th style="padding:6px 8px;text-align:right;color:#64748b;font-size:11px;">상대 성과</th>'
+                f'</tr></thead><tbody>{_rows_spy}</tbody></table>'
+            )
+            st.markdown(
+                f'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;'
+                f'margin-bottom:12px;box-shadow:0 1px 6px rgba(15,23,42,0.05);">'
+                f'<div style="color:#64748b;font-size:12px;font-weight:700;margin-bottom:10px;">'
+                f'📊 S&P500(SPY) 대비 성과 <span style="background:#dcfce7;color:#166534;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;margin-left:6px;">신뢰도: 높음</span></div>'
+                f'{_tbl_spy}</div>',
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        pass
+
+    # ── 공매도 비율
     if short_data.get("available"):
         short_pct   = short_data.get("short_pct")
         short_ratio = short_data.get("short_ratio")
@@ -1328,6 +1379,8 @@ if user_input_symbol:
             ),
             unsafe_allow_html=True,
         )
+
+    st.markdown("### 📐 기술적 분석")
 
     # ── MA200 / RSI
     col_t1, col_t2 = st.columns(2)
@@ -1368,6 +1421,8 @@ if user_input_symbol:
         vol_val   = f"현재/20일 평균: {vol_ratio:.2f}배" if is_valid_number(vol_ratio) else "N/A"
         st.markdown(render_info_card("거래량 평가", vol_val, f"<b>설명:</b> {volume_comment}"), unsafe_allow_html=True)
 
+    st.markdown("### 📍 지지 / 저항")
+
     # ── Support / Resistance
     sr = build_support_resistance(float(last_row[trend_col]), last_row["ATR14"], last_row["MA20"], last_row["MA50"], high_52)
     st.markdown("<div style='font-size:16px; font-weight:800; color:#0f172a; margin-top:8px; margin-bottom:12px;'>📌 주요 지지 / 저항 레벨</div>", unsafe_allow_html=True)
@@ -1378,6 +1433,8 @@ if user_input_symbol:
     r2.markdown(render_metric_html("2차 저항",  fmt_price(sr["resistance_2"])), unsafe_allow_html=True)
     br.markdown(render_metric_html("52주 고가", fmt_price(sr["breakout"])),     unsafe_allow_html=True)
     st.markdown("<br>", unsafe_allow_html=True)
+
+    st.markdown("### 🎯 관심 구간")
 
     # ── Action Zones
     st.markdown("<div style='font-size:16px; font-weight:800; color:#0f172a; margin-top:8px; margin-bottom:12px;'>🎯 기계적 관심 구간 (참고용)</div>", unsafe_allow_html=True)
@@ -1397,9 +1454,19 @@ if user_input_symbol:
 
     # ── Strategy
     short_strategy, mid_strategy = build_strategy_text(float(last_row[trend_col]), zones["zone1_low"], zones["zone2_low"], last_row["MA200"], last_row["RSI14"])
-    st.markdown("<div style='font-size:16px; font-weight:800; color:#0f172a; margin-top:10px; margin-bottom:12px;'>🧭 투자 전략</div>", unsafe_allow_html=True)
-    st.markdown(render_info_card("단기 전략", "1~2주", f"<b>전략:</b> {short_strategy}"), unsafe_allow_html=True)
-    st.markdown(render_info_card("중기 전략", "1~3개월", f"<b>전략:</b> {mid_strategy}"), unsafe_allow_html=True)
+    st.markdown("### 🧭 투자 전략")
+    st.markdown(
+        f'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:12px;">'
+        f'<div style="color:#64748b;font-size:12px;font-weight:700;margin-bottom:6px;">단기 (1~2주)</div>'
+        f'<div style="font-size:13px;color:#475569;line-height:1.7;">{short_strategy}</div></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        f'<div style="background:#fff;border:1px solid #e2e8f0;border-radius:14px;padding:16px;margin-bottom:12px;">'
+        f'<div style="color:#64748b;font-size:12px;font-weight:700;margin-bottom:6px;">중기 (1~3개월)</div>'
+        f'<div style="font-size:13px;color:#475569;line-height:1.7;">{mid_strategy}</div></div>',
+        unsafe_allow_html=True,
+    )
 
     # ── Scenario
     bull_scenario, bear_scenario = build_scenarios(
@@ -1407,12 +1474,16 @@ if user_input_symbol:
         last_row["MA200"], sr["support_1"], sr["support_2"],
         sr["resistance_1"], last_row["MACD"], last_row["MACD_SIGNAL"])
 
-    st.markdown("<div style='font-size:16px; font-weight:800; color:#0f172a; margin-top:10px; margin-bottom:12px;'>⚖️ 시나리오 분석</div>", unsafe_allow_html=True)
-    sb, srisk = st.columns(2)
-    with sb:
-        st.markdown(f"<div class='scenario-bull'><div style='font-weight:900;font-size:15px;margin-bottom:8px;'>강세 시나리오</div><div>{bull_scenario}</div></div>", unsafe_allow_html=True)
-    with srisk:
-        st.markdown(f"<div class='scenario-bear'><div style='font-weight:900;font-size:15px;margin-bottom:8px;'>약세 시나리오</div><div>{bear_scenario}</div></div>", unsafe_allow_html=True)
+    st.markdown("### ⚖️ 시나리오")
+    st.markdown(
+        f'<div style="background:#ecfdf5;border:1px solid #6ee7b7;border-radius:14px;padding:16px;margin-bottom:12px;">'
+        f'<div style="font-weight:900;font-size:14px;color:#065f46;margin-bottom:8px;">🟢 강세 시나리오</div>'
+        f'<div style="font-size:14px;color:#065f46;line-height:1.8;">{bull_scenario}</div></div>'
+        f'<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:14px;padding:16px;margin-bottom:20px;">'
+        f'<div style="font-weight:900;font-size:14px;color:#991b1b;margin-bottom:8px;">🔴 약세 시나리오</div>'
+        f'<div style="font-size:14px;color:#991b1b;line-height:1.8;">{bear_scenario}</div></div>',
+        unsafe_allow_html=True,
+    )
 
 
     # ── AI 투자 요약 ──
